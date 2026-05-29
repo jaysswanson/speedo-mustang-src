@@ -30,12 +30,31 @@ include(pico_sdk_import.cmake)
 
 project(speedo_mustang C CXX ASM)
 
+# ---------------------------------------------------------------------------
+# Host-side unit tests (no Pico SDK required)
+# Usage: cmake -DSPEEDO_UNIT_TEST=ON -DCMAKE_BUILD_TYPE=Debug ..
+# ---------------------------------------------------------------------------
+option(SPEEDO_UNIT_TEST "Build host-side unit tests instead of firmware" OFF)
+
+if(SPEEDO_UNIT_TEST)
+    # Plain host executable — no Pico SDK, no cross-compiler needed
+    add_library(speedo_logic STATIC speedo_logic.cpp)
+    target_include_directories(speedo_logic PUBLIC ${CMAKE_CURRENT_LIST_DIR})
+
+    find_package(GTest REQUIRED)
+    add_executable(speedo_tests test/test_speedo_logic.cpp)
+    target_link_libraries(speedo_tests speedo_logic GTest::gtest GTest::gtest_main m)
+    enable_testing()
+    add_test(NAME speedo_unit_tests COMMAND speedo_tests)
+    return()   # Skip everything below (Pico SDK not initialised in this mode)
+endif()
+
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(speedo_mustang speedo_mustang.cpp )
+add_executable(speedo_mustang speedo_mustang.cpp speedo_logic.cpp)
 
 pico_set_program_name(speedo_mustang "speedo_mustang")
 pico_set_program_version(speedo_mustang "0.1")
