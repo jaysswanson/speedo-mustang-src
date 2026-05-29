@@ -2,7 +2,6 @@
 #include "pico/stdlib.h"
 #include "hardware/timer.h"
 #include "hardware/watchdog.h"
-//#include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "hardware/sync.h"
 #include <math.h>
@@ -11,7 +10,6 @@
 #define PIN_OUTPUT 14
 #define WINDOW_SIZE 3 // Size of the circular buffer for pulse widths
 #define AVG_INTERVAL_MS 300
-//#define NUM_ZEROS 10 // Number of samples to wait before zeroing the pulse width
 
 // output pulse frequency
 // 8.89Hz=1mph  782Hz=88mph  489Hz=55mph  1160=130mph 
@@ -58,8 +56,8 @@ void reset_circular_buffer() {
     }
     pulse_pos = 0;
     window_filled = false;
-    output_interval_us = 0; 
-    //last_output_interval_us = 0;
+    output_interval_us = 0;
+    last_output_interval_us = 0;
     input_interval_us = 0;
     last_edge = nil_time; // Reset last edge time
         
@@ -85,12 +83,8 @@ void gpio_callback(uint gpio, uint32_t events) {
 
         if (width_us >= MIN_PULSE_US) {
             if ( width_us > MAX_PULSE_US) {
-                //width_us = MAX_PULSE_US; // Cap the pulse width to prevent overflow
-                printf("Bad pulse width: %lu µs\n", width_us);
                 reset_circular_buffer();
-                cancel_repeating_timer(&output_timer);  // Stop current timer
-                    
-                printf("Resetting circular buffer and cancelling timer due to bad pulse width.\n");    
+                cancel_repeating_timer(&output_timer);
             }
                 
             else {
@@ -139,8 +133,6 @@ void compute_quality_metrics(double& std_dev, uint64_t& count) {
         else if (count > 0) {
             uint64_t sum = 0;
             uint64_t output_sum = 0;
-            uint64_t diff = 0;
-
             double variance = 0.0;
             for (uint64_t i = 0; i < count; ++i) {
                 sum += pulse_in_window[i];
@@ -150,8 +142,7 @@ void compute_quality_metrics(double& std_dev, uint64_t& count) {
             output_interval_us = output_sum / count;
 
             for (uint64_t i = 0; i < count; ++i) {
-
-                diff = pulse_in_window[i] - input_interval_us;
+                double diff = (double)pulse_in_window[i] - (double)input_interval_us;
                 variance += diff * diff;
             }
 
@@ -180,9 +171,6 @@ int main()
     // second arg is pause on debug which means the watchdog will pause when stepping through code
     watchdog_enable(5000, 1);
 
-    int empty_count = 0;
-
-
     // Input setup
     gpio_init(PIN_INPUT);
     gpio_set_dir(PIN_INPUT, GPIO_IN);
@@ -198,9 +186,6 @@ int main()
     // Main processing loop
     absolute_time_t next_avg_time = make_timeout_time_ms(AVG_INTERVAL_MS);
 
-    //DEBUG DEBUG
-    //output_interval_us=2500;
-
     while (true) {
 
         // You need to call this function at least more often than the 1000ms in the enable call to prevent a reboot
@@ -208,42 +193,39 @@ int main()
 
 
         if (absolute_time_diff_us(get_absolute_time(), next_avg_time) <= 0) {
-            uint64_t avg = 0, count = 0;
+            uint64_t count = 0;
             double std_dev = 0.0;
 
-            //DEBUG DEBUG
             compute_quality_metrics(std_dev, count);
-            
+
+            // Snapshot volatile output_interval_us once under lock to avoid race with timer ISR
+            uint32_t irq_status = save_and_disable_interrupts();
+            uint64_t current_output_interval = output_interval_us;
+            restore_interrupts(irq_status);
+
             float freq_hz = input_interval_us > 0 ? 1e6f / input_interval_us : 0;
-            float output_freq_hz = output_interval_us > 0 ? 1e6f / output_interval_us : 0;
-            printf("Freq: %.2f Hz | Avg Width: %u µs | Jitter: %.2f µs | Output: %.2f Hz | Out width: %u µs | Previous Out: %u | Bad Pulses: %u | Samples: %u\n",
-                   freq_hz, input_interval_us, std_dev, output_freq_hz, output_interval_us, last_output_interval_us, bad_pulse_count, count);
-  
+            float output_freq_hz = current_output_interval > 0 ? 1e6f / current_output_interval : 0;
+            printf("Freq: %.2f Hz | Avg Width: %llu µs | Jitter: %.2f µs | Output: %.2f Hz | Out width: %llu µs | Previous Out: %llu | Bad Pulses: %llu | Samples: %llu\n",
+                   freq_hz, input_interval_us, std_dev, output_freq_hz, current_output_interval, last_output_interval_us, bad_pulse_count, count);
+
             float change_rate = 0.0;
-            if (output_interval_us > 0) {
-                change_rate = (float)(output_interval_us - last_output_interval_us) / output_interval_us * 100.0f;
+            if (current_output_interval > 0) {
+                change_rate = (float)((int64_t)current_output_interval - (int64_t)last_output_interval_us) / current_output_interval * 100.0f;
             }
-            //if ( output_interval_us - last_output_interval_us > 2*std_dev || output_interval_us - last_output_interval_us < -2*std_dev ) {
-            if ( change_rate > 1 || change_rate < -1 ) {    
-                printf("Output interval changed significantly: %X -> %X\n", last_output_interval_us, output_interval_us);
-                // Restart the output pulse timer with the new interval
-                if (output_interval_us < MAX_OUTPUT_PULSE_US) {
-                    cancel_repeating_timer(&output_timer);  // Stop current timer
-                    //negative interval calculates the period from the start of each callback
-                    //positive interval calculates the period from the end of the callback 
-                    printf("Setting output interval to %u µs\n", output_interval_us);
-                    add_repeating_timer_us(-output_interval_us, repeating_timer_callback, NULL, &output_timer);
-                    empty_count = 0; // Reset empty count when output is enabled
+            if (change_rate > 1 || change_rate < -1) {
+                printf("Output interval changed significantly: %llu -> %llu µs\n", last_output_interval_us, current_output_interval);
+                cancel_repeating_timer(&output_timer);
+                if (current_output_interval < MAX_OUTPUT_PULSE_US) {
+                    // negative interval: period measured from start of each callback
+                    printf("Setting output interval to %llu µs\n", current_output_interval);
+                    add_repeating_timer_us(-(int64_t)current_output_interval, repeating_timer_callback, NULL, &output_timer);
                 }
-                else { 
-                    cancel_repeating_timer(&output_timer);  // Stop current timer
-                    printf("Output interval %u µs exceeds maximum %u µs, disabling output.\n", output_interval_us, MAX_OUTPUT_PULSE_US);
+                else {
+                    printf("Output interval %llu µs exceeds maximum %u µs, disabling output.\n", current_output_interval, MAX_OUTPUT_PULSE_US);
                     gpio_put(PIN_OUTPUT, 1);
                     output_pin_state = true;
-                    empty_count = 0; // Reset empty count when output is disabled
                 }
-                last_output_interval_us = output_interval_us;
-                printf("Last output interval updated to %X µs\n", last_output_interval_us);
+                last_output_interval_us = current_output_interval;
             }
 
             
