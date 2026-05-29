@@ -1,9 +1,9 @@
 # Speedo Mustang — Technical Design Document
 
-Firmware for the Raspberry Pi Pico that converts a motorcycle speed sensor's
+Firmware for the Raspberry Pi Pico that converts a Mustang speed sensor's
 pulse train into a calibrated output pulse stream for an analog speedometer
 gauge.  The firmware runs on a bare Pico board wired in-line between the
-vehicle's wheel speed sensor and the gauge cluster.
+vehicle's transmission speed sensor and the gauge cluster.
 
 ---
 
@@ -27,7 +27,7 @@ vehicle's wheel speed sensor and the gauge cluster.
 ## 1. System Overview
 
 ```
-  Wheel speed sensor
+  Transmission speed sensor (magnetic reluctor sensor)
         │
         │  raw pulse train (low freq, 1/4× output)
         ▼
@@ -39,7 +39,7 @@ vehicle's wheel speed sensor and the gauge cluster.
         │
         │  conditioned pulse train (speedometer frequency)
         ▼
-  Analog speedometer gauge
+  Computer input to speedometer gauge
 ```
 
 The sensor produces a pulse frequency that is **one-quarter** of the frequency
@@ -69,16 +69,11 @@ the two half-cycles required to produce a full square-wave toggle cycle).
 ```
 Vehicle harness                  Pico
 ─────────────────────────────────────────────────────
-Wheel speed sensor signal ──────► GPIO 10  (PIN_INPUT)
+Transmission speed sensor signal ──────► GPIO 10  (PIN_INPUT)
 Speedometer gauge signal  ◄──────  GPIO 14  (PIN_OUTPUT)
 Ground                    ─────── GND
 +5 V / +3.3 V             ──────► VSYS / 3V3
 ```
-
-> **Level shifting:** The RP2040 GPIO inputs are 3.3 V tolerant only.  If the
-> sensor or gauge operates at 5 V, a voltage divider or level-shifter is
-> required on both GPIO 10 (input) and GPIO 14 (output) before connecting to
-> vehicle wiring.
 
 ### 2.3 Watchdog
 
@@ -106,6 +101,11 @@ Pulses shorter than 3 200 µs are counted as noise/glitch
 stationary vehicle or lost signal; the state machine resets and the output
 timer is cancelled.
 
+> NOTE: The input signal from the transmission speed sensor is a magnetic reluctor
+> signal. The raw signal is conditioned by a MAX9925. The output of the conditioner
+> is a clean 5v square wave.  That signal is level shifted to 3.3v for the Pico
+> by a BC848 NPN transistor
+
 ### 3.2 Output signal
 
 | Parameter | Value | Notes |
@@ -114,6 +114,14 @@ timer is cancelled.
 | Minimum period | 800 µs (0.8 ms) | ~1 250 Hz = 140 mph |
 | Maximum period | 93 750 µs (93.75 ms) | ~10.67 Hz = ~1.2 mph |
 | Idle state | GPIO 14 held high | When no valid signal present |
+
+> NOTE: The computer that controls the spedometer is expecting a signal from the 
+> magnetic reluctor. To simulate that, the output drives a mosfet that drives a 
+> 1:1 transformer. The output signal from the secondary is close enough to the
+> signal from a reluctor that the computer is happy with it. The frequency-shifted
+> signal is at the correct frequency so that the spedometer is accurate. The output
+> pin signal from the Pico (at 3.3v) is buffered by a BC848 NPN transistor, which
+> in turn drives the transformer.
 
 ---
 
