@@ -276,10 +276,10 @@ Called from the GPIO ISR with the measured interval between consecutive rising
 edges.
 
 ```
-width_us < MIN_PULSE_US (3 200)?
+width_us < MIN_PULSE_US (3 200)
   → discard, increment bad_pulse_count, return false
 
-width_us > MAX_PULSE_US (750 000)?
+width_us > MAX_PULSE_US (750 000)
   → speedo_reset(), return false  (caller cancels timer)
 
 otherwise:
