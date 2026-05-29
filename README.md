@@ -506,16 +506,76 @@ ctest --test-dir build-test --output-on-failure
 | `UpdateOutput` | 4 | <1 % hysteresis, >1 % restart, over-range disable, zero disable |
 | `Scaling` | 1 | 55 mph round-trip frequency sanity check |
 
-### 11.2 Hardware-in-the-loop (suggested)
+### 11.2 Hardware-in-the-loop (HIL) tests
 
-A second Pico acting as a signal generator can drive GPIO 10 at known
-frequencies while a logic analyzer or the first Pico's own diagnostic output
-verifies:
+A second Pico (`hil_test/hil_test.cpp`) acts as both signal generator and
+output checker.  It drives the DUT's input, measures the DUT's output, and
+prints a PASS / FAIL report over its own USB serial port.  The onboard LED
+also indicates the final result: slow blink = all pass, rapid blink = failure.
 
-- Output frequency = input frequency × 4
-- Output stops within 1 s of signal dropout
-- Output resumes correctly after signal returns
-- `bad_pulse_count` increments on injected glitches
+#### Wiring
+
+```
+HIL Pico                     DUT Pico
+─────────────────────────────────────────────
+GPIO 0  (GEN_PIN)    ──────► GPIO 10 (PIN_INPUT)
+GPIO 1  (CHECK_PIN)  ◄──────  GPIO 14 (PIN_OUTPUT)
+GND                  ─────── GND
+```
+
+Both boards share a common ground.  No level shifting is needed between two
+Picos (both 3.3 V logic).  The HIL Pico connects to the host PC via its own
+USB cable for serial output; the DUT can also be connected for its diagnostic
+stream if desired.
+
+#### Build and flash
+
+```powershell
+# Build HIL firmware (from the repo root)
+cmake -B build-hil -G Ninja -S hil_test
+cmake --build build-hil
+
+# Flash to the HIL Pico (hold BOOTSEL, then connect USB)
+~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool.exe load build-hil/hil_test.uf2 -fx
+```
+
+#### Test cases
+
+| ID | Name | What it does | Pass criterion |
+|---|---|---|---|
+| TC-1a–d | Steady speed | Generates constant input at 5, 30, 55, 88 mph | Output freq = input × 4, within ±5 % |
+| TC-2 | Dropout | Stops input after DUT locks on | DUT output stops within 1.5 s |
+| TC-3 | Resume | Restarts input after dropout | DUT output resumes at correct frequency |
+| TC-4 | Glitch rejection | Injects 8 pulses well below `MIN_PULSE_US` | DUT output frequency unchanged |
+| TC-5 | Ramp | Steps through 5 → 20 → 55 → 88 → 55 → 20 mph | All steps within ±5 % |
+| TC-6 | Boundary MIN | Input period exactly at `MIN_PULSE_US` | DUT produces output |
+| TC-7 | Boundary MAX | Input period just above `MAX_PULSE_US` | DUT stops output |
+
+#### Example output
+
+```
+============================================================
+  Speedo Mustang — Hardware-in-the-Loop Test Suite
+  Generator → DUT GPIO10  |  DUT GPIO14 → Checker
+  Tolerance: ±5 %
+============================================================
+
+[PASS] TC-1a Steady  5 mph   5.0 mph | expected 44.45 Hz | measured 44.31 Hz | error 0.3%
+[PASS] TC-1b Steady 30 mph  30.0 mph | expected 266.70 Hz | measured 265.88 Hz | error 0.3%
+[PASS] TC-1c Steady 55 mph  55.0 mph | expected 488.95 Hz | measured 487.61 Hz | error 0.3%
+[PASS] TC-1d Steady 88 mph  88.0 mph | expected 782.32 Hz | measured 780.19 Hz | error 0.3%
+[PASS] TC-2 Dropout          DUT output stopped within 1.5 s of signal loss
+[PASS] TC-3 Resume           output resumed at 488.72 Hz (expected 488.95 Hz, error 0.0%)
+[PASS] TC-4 Glitch           pre 488.95 Hz → post 487.61 Hz, drift 0.3%
+[PASS] TC-5 Ramp             5mph:0.3%(ok) 20mph:0.3%(ok) 55mph:0.3%(ok) 88mph:0.3%(ok) ...
+[PASS] TC-6 Boundary MIN     output period 800 us at MIN_PULSE input
+[PASS] TC-7 Boundary MAX     DUT output stopped on over-max pulse
+
+============================================================
+  Results: 10 / 10 passed
+  ALL TESTS PASSED
+============================================================
+```
 
 ---
 
