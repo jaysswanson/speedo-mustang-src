@@ -7,7 +7,6 @@
                 "${userHome}/.pico-sdk/sdk/2.2.0/**"
             ],
             "forcedInclude": [
-                "${workspaceFolder}/build/generated/pico_base/pico/config_autogen.h",
                 "${userHome}/.pico-sdk/sdk/2.2.0/src/common/pico_base_headers/include/pico.h"
             ],
             "defines": [],
