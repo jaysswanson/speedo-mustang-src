@@ -6,7 +6,7 @@
 // Constants
 // ---------------------------------------------------------------------------
 #define WINDOW_SIZE         3U
-#define MIN_PULSE_US        3200U
+#define MIN_PULSE_US        2500U
 #define MAX_PULSE_US        750000U
 #define MAX_OUTPUT_PULSE_US 93750U
 #define PULSE_TIMEOUT_US    1000000U

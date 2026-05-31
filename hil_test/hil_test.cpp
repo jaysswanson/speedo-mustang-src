@@ -32,7 +32,7 @@
 // ---------------------------------------------------------------------------
 // DUT timing constants (kept in sync with speedo_logic.h)
 // ---------------------------------------------------------------------------
-#define DUT_MIN_PULSE_US     3200U
+#define DUT_MIN_PULSE_US     2500U
 #define DUT_MAX_PULSE_US     750000U
 #define DUT_TIMEOUT_US       1000000U
 #define DUT_AVG_INTERVAL_MS  300U
