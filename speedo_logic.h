@@ -2,11 +2,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-#define WINDOW_SIZE         3U
-#define MIN_PULSE_US        2500U
+#define WINDOW_SIZE         8U  // physical buffer capacity (max samples stored)
+#define MEASUREMENT_WINDOW_US 300000U
+
+// Effective window size used for averaging will vary with speed to improve
+// noise rejection at higher speeds. The runtime chooses a value between
+// `MIN_EFFECTIVE_WINDOW` and `WINDOW_SIZE` based on recent pulse timing.
+#define MIN_EFFECTIVE_WINDOW 3U
+#define MIN_PULSE_US        3000U
 #define MAX_PULSE_US        750000U
 #define MAX_OUTPUT_PULSE_US 93750U
 #define PULSE_TIMEOUT_US    1000000U

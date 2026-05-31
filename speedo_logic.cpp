@@ -58,7 +58,30 @@ bool speedo_process_pulse(SpeedoState &s, uint64_t width_us) {
 // ---------------------------------------------------------------------------
 bool speedo_compute_metrics(SpeedoState &s, uint64_t now_us,
                             double &std_dev, uint64_t &count) {
-    count    = s.window_filled ? WINDOW_SIZE : s.pulse_pos;
+    // Determine how many samples are actually available in the circular buffer
+    uint32_t available = s.window_filled ? WINDOW_SIZE : (uint32_t)s.pulse_pos;
+
+    // Choose an effective window size such that the averaged samples cover
+    // roughly `MEASUREMENT_WINDOW_US` of signal time, up to `WINDOW_SIZE`.
+    // This gives more noise rejection at higher speed while keeping low-speed
+    // responsiveness bounded by `MIN_EFFECTIVE_WINDOW`.
+    uint32_t effective;
+    uint64_t basis_interval = s.input_interval_us ? s.input_interval_us : s.last_input_interval_us;
+    if (basis_interval == 0) {
+        // No prior interval available; preserve the current behavior by using
+        // all available samples.
+        effective = available;
+    } else {
+        effective = (uint32_t)((MEASUREMENT_WINDOW_US + basis_interval / 2) / basis_interval);
+        if (effective < MIN_EFFECTIVE_WINDOW) {
+            effective = MIN_EFFECTIVE_WINDOW;
+        } else if (effective > WINDOW_SIZE) {
+            effective = WINDOW_SIZE;
+        }
+    }
+
+    // Final count is the min of available samples and the chosen effective size.
+    count = (uint64_t)(available < effective ? available : effective);
     std_dev  = 0.0;
     s.input_interval_us  = 0;
     // Do NOT zero output_interval_us here — leave last good value visible
@@ -80,18 +103,44 @@ bool speedo_compute_metrics(SpeedoState &s, uint64_t now_us,
 
     // Rolling average
     uint64_t sum = 0, output_sum = 0;
-    for (uint64_t i = 0; i < count; ++i) {
-        sum        += s.pulse_in_window[i];
-        output_sum += s.pulse_out_window[i];
+    // When the buffer is filled and we're using fewer than WINDOW_SIZE
+    // samples, use the most-recent `count` entries. If the buffer hasn't
+    // wrapped yet, use the first `count` entries.
+    if (s.window_filled && count < WINDOW_SIZE) {
+        // Use the most recent `count` samples ending at (pulse_pos - 1)
+        int idx = (int)s.pulse_pos - 1;
+        if (idx < 0) idx += WINDOW_SIZE;
+        for (uint64_t i = 0; i < count; ++i) {
+            sum        += s.pulse_in_window[idx];
+            output_sum += s.pulse_out_window[idx];
+            idx--;
+            if (idx < 0) idx += WINDOW_SIZE;
+        }
+    } else {
+        for (uint64_t i = 0; i < count; ++i) {
+            sum        += s.pulse_in_window[i];
+            output_sum += s.pulse_out_window[i];
+        }
     }
     s.input_interval_us  = sum        / count;
     s.output_interval_us = output_sum / count;
 
     // Jitter (std dev of input widths)
     double variance = 0.0;
-    for (uint64_t i = 0; i < count; ++i) {
-        double diff = (double)s.pulse_in_window[i] - (double)s.input_interval_us;
-        variance += diff * diff;
+    if (s.window_filled && count < WINDOW_SIZE) {
+        int idx = (int)s.pulse_pos - 1;
+        if (idx < 0) idx += WINDOW_SIZE;
+        for (uint64_t i = 0; i < count; ++i) {
+            double diff = (double)s.pulse_in_window[idx] - (double)s.input_interval_us;
+            variance += diff * diff;
+            idx--;
+            if (idx < 0) idx += WINDOW_SIZE;
+        }
+    } else {
+        for (uint64_t i = 0; i < count; ++i) {
+            double diff = (double)s.pulse_in_window[i] - (double)s.input_interval_us;
+            variance += diff * diff;
+        }
     }
     std_dev = sqrt(variance / count);
 

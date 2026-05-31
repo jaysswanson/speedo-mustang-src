@@ -32,7 +32,7 @@
 // ---------------------------------------------------------------------------
 // DUT timing constants (kept in sync with speedo_logic.h)
 // ---------------------------------------------------------------------------
-#define DUT_MIN_PULSE_US     2500U
+#define DUT_MIN_PULSE_US     3000U
 #define DUT_MAX_PULSE_US     750000U
 #define DUT_TIMEOUT_US       1000000U
 #define DUT_AVG_INTERVAL_MS  300U
@@ -202,6 +202,12 @@ static void reset_test_state(void) {
     sleep_ms(1500);
 }
 
+static void clear_historical_counts(void) {
+    g_total_tests_run = 0;
+    g_total_tests_passed = 0;
+    printf("Cleared total historical results.\n");
+}
+
 static bool str_equal_ignore_case(const char *a, const char *b);
 static bool str_equal_ignore_case_n(const char *a, const char *b, size_t n);
 static bool command_matches(const char *input, const char *pattern, int *repeat_count);
@@ -210,8 +216,8 @@ static int  map_test_command(const char *input, int *repeat_count, double *stead
 static void print_help(void) {
     printf("\nUSB serial commands:\n");
     printf("  r-# or run-#          - restart full suite # times (default 1)\n");
+    printf("  c or clear (Ctrl-C)    - clear total historical pass/fail counts\n");
     printf("  0-# or 1a-# or steady5-#   - TC-1a Steady  5 mph\n");
-    printf("  1-# or 1b-# or steady30-#  - TC-1b Steady 30 mph\n");
     printf("  2-# or 1c-# or steady55-#  - TC-1c Steady 55 mph\n");
     printf("  3-# or 1d-# or steady88-#  - TC-1d Steady 88 mph\n");
     printf("  4-# or dropout-#          - TC-2 Dropout\n");
@@ -596,7 +602,7 @@ static void tc_glitch_rejection(void) {
     }
 
     // Stop the real generator, then fire 8 short glitch pulses manually
-    // (each much shorter than DUT_MIN_PULSE_US = 3200 µs)
+    // (each much shorter than DUT_MIN_PULSE_US = 3000 µs)
     cancel_repeating_timer(&g_gen_timer);
     g_gen_running = false;
     sleep_us(500);
@@ -801,8 +807,12 @@ int main() {
 
             int repeat_count = 1;
             double steady_mph = 0.0;
-            if (command_matches(command_buf, "h", &repeat_count) ||
-                command_matches(command_buf, "help", &repeat_count)) {
+            if ((command_len == 1 && command_buf[0] == 3) ||
+                command_matches(command_buf, "c", &repeat_count) ||
+                command_matches(command_buf, "clear", &repeat_count)) {
+                clear_historical_counts();
+            } else if (command_matches(command_buf, "h", &repeat_count) ||
+                       command_matches(command_buf, "help", &repeat_count)) {
                 print_help();
             } else if (command_matches(command_buf, "r", &repeat_count) ||
                        command_matches(command_buf, "run", &repeat_count) ||
