@@ -179,12 +179,18 @@ static uint64_t mph_to_expected_output_period(double mph) {
 // ---------------------------------------------------------------------------
 // Test result bookkeeping
 // ---------------------------------------------------------------------------
-static int g_tests_run    = 0;
-static int g_tests_passed = 0;
+static int g_tests_run       = 0;
+static int g_tests_passed    = 0;
+static int g_total_tests_run = 0;
+static int g_total_tests_passed = 0;
 
 static void report(const char *name, bool passed, const char *detail) {
     ++g_tests_run;
-    if (passed) ++g_tests_passed;
+    ++g_total_tests_run;
+    if (passed) {
+        ++g_tests_passed;
+        ++g_total_tests_passed;
+    }
     printf("[%s] %s  %s\n", passed ? "PASS" : "FAIL", name, detail);
 }
 
@@ -196,20 +202,140 @@ static void reset_test_state(void) {
     sleep_ms(1500);
 }
 
+static bool str_equal_ignore_case(const char *a, const char *b);
+static bool str_equal_ignore_case_n(const char *a, const char *b, size_t n);
+static bool command_matches(const char *input, const char *pattern, int *repeat_count);
+static int  map_test_command(const char *input, int *repeat_count, double *steady_mph);
+
 static void print_help(void) {
     printf("\nUSB serial commands:\n");
-    printf("  r - restart all tests\n");
-    printf("  0 - TC-1a Steady  5 mph\n");
-    printf("  1 - TC-1b Steady 30 mph\n");
-    printf("  2 - TC-1c Steady 55 mph\n");
-    printf("  3 - TC-1d Steady 88 mph\n");
-    printf("  4 - TC-2 Dropout\n");
-    printf("  5 - TC-3 Resume\n");
-    printf("  6 - TC-4 Glitch\n");
-    printf("  7 - TC-5 Ramp\n");
-    printf("  8 - TC-6 Boundary MIN\n");
-    printf("  9 - TC-7 Boundary MAX\n");
-    printf("  h - help\n\n");
+    printf("  r-# or run-#          - restart full suite # times (default 1)\n");
+    printf("  0-# or 1a-# or steady5-#   - TC-1a Steady  5 mph\n");
+    printf("  1-# or 1b-# or steady30-#  - TC-1b Steady 30 mph\n");
+    printf("  2-# or 1c-# or steady55-#  - TC-1c Steady 55 mph\n");
+    printf("  3-# or 1d-# or steady88-#  - TC-1d Steady 88 mph\n");
+    printf("  4-# or dropout-#          - TC-2 Dropout\n");
+    printf("  5-# or resume-#           - TC-3 Resume\n");
+    printf("  6-# or glitch-#           - TC-4 Glitch\n");
+    printf("  7-# or ramp-#             - TC-5 Ramp\n");
+    printf("  8-# or min-#              - TC-6 Boundary MIN\n");
+    printf("  9-# or max-#              - TC-7 Boundary MAX\n");
+    printf("  steadyX-#                - custom steady at X mph # times\n");
+    printf("  h or help                - show this menu\n\n");
+}
+
+static bool str_equal_ignore_case(const char *a, const char *b) {
+    while (*a && *b) {
+        char ca = *a >= 'A' && *a <= 'Z' ? *a + ('a' - 'A') : *a;
+        char cb = *b >= 'A' && *b <= 'Z' ? *b + ('a' - 'A') : *b;
+        if (ca != cb) return false;
+        a++; b++;
+    }
+    return *a == *b;
+}
+
+static bool str_equal_ignore_case_n(const char *a, const char *b, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+        if (a[i] == '\0' || b[i] == '\0') return false;
+        char ca = a[i] >= 'A' && a[i] <= 'Z' ? a[i] + ('a' - 'A') : a[i];
+        char cb = b[i] >= 'A' && b[i] <= 'Z' ? b[i] + ('a' - 'A') : b[i];
+        if (ca != cb) return false;
+    }
+    return true;
+}
+
+static bool command_matches(const char *input, const char *pattern, int *repeat_count) {
+    size_t len = strlen(pattern);
+    if (!str_equal_ignore_case_n(input, pattern, len)) {
+        return false;
+    }
+    const char *suffix = input + len;
+    if (*suffix == '\0') {
+        *repeat_count = 1;
+        return true;
+    }
+    if (*suffix == '-') {
+        suffix++;
+    }
+    int count = 0;
+    while (*suffix) {
+        if (*suffix < '0' || *suffix > '9') {
+            return false;
+        }
+        count = count * 10 + (*suffix - '0');
+        suffix++;
+    }
+    *repeat_count = (count <= 0 ? 1 : count);
+    return true;
+}
+
+enum {
+    TEST_INDEX_DYNAMIC_STEADY = 100
+};
+
+static int map_test_command(const char *input, int *repeat_count, double *steady_mph) {
+    *steady_mph = 0.0;
+
+    const char *steady_prefix = "steady";
+    size_t steady_len = strlen(steady_prefix);
+    if (str_equal_ignore_case_n(input, steady_prefix, steady_len)) {
+        const char *suffix = input + steady_len;
+        if (*suffix != '\0') {
+            const char *dash = strchr(suffix, '-');
+            const char *speed_end = dash ? dash : suffix + strlen(suffix);
+            if (speed_end > suffix) {
+                int mph = 0;
+                for (const char *p = suffix; p < speed_end; ++p) {
+                    if (*p < '0' || *p > '9') {
+                        mph = 0;
+                        break;
+                    }
+                    mph = mph * 10 + (*p - '0');
+                }
+                if (mph > 0) {
+                    if (dash) {
+                        int count = 0;
+                        const char *p = dash + 1;
+                        if (*p == '\0') {
+                            return -1;
+                        }
+                        while (*p) {
+                            if (*p < '0' || *p > '9') return -1;
+                            count = count * 10 + (*p - '0');
+                            p++;
+                        }
+                        *repeat_count = (count <= 0 ? 1 : count);
+                    } else {
+                        *repeat_count = 1;
+                    }
+                    *steady_mph = (double)mph;
+                    return TEST_INDEX_DYNAMIC_STEADY;
+                }
+            }
+        }
+    }
+
+    struct cmd_entry { const char *name; int index; };
+    static const struct cmd_entry commands[] = {
+        {"0", 0}, {"1a", 0}, {"steady5", 0},
+        {"1", 1}, {"1b", 1}, {"steady30", 1},
+        {"2", 2}, {"1c", 2}, {"steady55", 2},
+        {"3", 3}, {"1d", 3}, {"steady88", 3},
+        {"4", 4}, {"dropout", 4},
+        {"5", 5}, {"resume", 5},
+        {"6", 6}, {"glitch", 6},
+        {"7", 7}, {"ramp", 7},
+        {"8", 8}, {"min", 8}, {"boundarymin", 8},
+        {"9", 9}, {"max", 9}, {"boundarymax", 9}
+    };
+    for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
+        int count;
+        if (command_matches(input, commands[i].name, &count)) {
+            *repeat_count = count;
+            return commands[i].index;
+        }
+    }
+    return -1;
 }
 
 static void tc_steady_speed(const char *label, double mph);
@@ -231,7 +357,24 @@ static void tc_5(void)  { tc_speed_ramp(); }
 static void tc_6(void)  { tc_boundary_min(); }
 static void tc_7(void)  { tc_boundary_max(); }
 
-static void run_test_by_index(int index) {
+static void print_run_summary(void) {
+    printf("\n============================================================\n");
+    printf("  Run results:   %d / %d passed\n", g_tests_passed, g_tests_run);
+    printf("  Total results: %d / %d passed\n", g_total_tests_passed, g_total_tests_run);
+    if (g_tests_passed == g_tests_run) {
+        printf("  RUN PASSED\n");
+    } else {
+        printf("  *** RUN FAILED (%d) ***\n", g_tests_run - g_tests_passed);
+    }
+    if (g_total_tests_passed == g_total_tests_run) {
+        printf("  TOTAL PASSED\n");
+    } else {
+        printf("  *** TOTAL FAILED (%d) ***\n", g_total_tests_run - g_total_tests_passed);
+    }
+    printf("============================================================\n");
+}
+
+static void run_one_test_by_index(int index) {
     static void (*const tests[])(void) = {
         tc_1a, tc_1b, tc_1c, tc_1d,
         tc_2, tc_3, tc_4, tc_5, tc_6, tc_7
@@ -254,7 +397,41 @@ static void run_test_by_index(int index) {
     }
     printf("\nRunning %s...\n", names[index]);
     tests[index]();
-    printf("\nResults: %d / %d passed\n", g_tests_passed, g_tests_run);
+}
+
+static void run_dynamic_steady(double mph, int repeats) {
+    if (mph <= 0.0) {
+        printf("Invalid steady speed %.1f\n", mph);
+        return;
+    }
+    if (repeats <= 0) repeats = 1;
+    reset_test_state();
+    for (int i = 0; i < repeats; ++i) {
+        if (i > 0) {
+            printf("\n--- Iteration %d of %d for steady %.0f mph ---\n", i + 1, repeats, mph);
+        }
+        char label[64];
+        snprintf(label, sizeof(label), "steady %.0f mph", mph);
+        tc_steady_speed(label, mph);
+    }
+    print_run_summary();
+}
+
+static void run_test_by_index(int index, int repeats) {
+    if (index < 0) {
+        printf("Invalid test index %d\n", index);
+        return;
+    }
+    if (repeats <= 0) repeats = 1;
+
+    reset_test_state();
+    for (int i = 0; i < repeats; ++i) {
+        if (i > 0) {
+            printf("\n--- Iteration %d of %d ---\n", i + 1, repeats);
+        }
+        run_one_test_by_index(index);
+    }
+    print_run_summary();
 }
 
 static void run_all_tests(void) {
@@ -269,14 +446,18 @@ static void run_all_tests(void) {
     tc_5();
     tc_6();
     tc_7();
-    printf("\n============================================================\n");
-    printf("  Results: %d / %d passed\n", g_tests_passed, g_tests_run);
-    if (g_tests_passed == g_tests_run) {
-        printf("  ALL TESTS PASSED\n");
-    } else {
-        printf("  *** %d TEST(S) FAILED ***\n", g_tests_run - g_tests_passed);
+    print_run_summary();
+}
+
+static void run_all_tests_repeat(int repeats) {
+    if (repeats <= 0) repeats = 1;
+    reset_test_state();
+    for (int i = 0; i < repeats; ++i) {
+        if (i > 0) {
+            printf("\n--- Full suite run %d of %d ---\n", i + 1, repeats);
+        }
+        run_all_tests();
     }
-    printf("============================================================\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -598,17 +779,44 @@ int main() {
             if (c == '\r' || c == '\n') {
                 continue;
             }
-            printf("%c\n", (char)c);
-            if (c == 'h' || c == 'H') {
+
+            char command_buf[32];
+            int  command_len = 0;
+            command_buf[command_len++] = (char)c;
+
+            while (command_len < (int)sizeof(command_buf) - 1) {
+                int next = getchar_timeout_us(100000);
+                if (next == PICO_ERROR_TIMEOUT || next == '\r' || next == '\n') {
+                    break;
+                }
+                if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
+                    (next >= '0' && next <= '9') || next == '-') {
+                    command_buf[command_len++] = (char)next;
+                    continue;
+                }
+                break;
+            }
+            command_buf[command_len] = '\0';
+            printf("%s\n", command_buf);
+
+            int repeat_count = 1;
+            double steady_mph = 0.0;
+            if (command_matches(command_buf, "h", &repeat_count) ||
+                command_matches(command_buf, "help", &repeat_count)) {
                 print_help();
-            } else if (c == 'r' || c == 'R') {
-                reset_test_state();
-                run_all_tests();
-            } else if (c >= '0' && c <= '9') {
-                reset_test_state();
-                run_test_by_index(c - '0');
+            } else if (command_matches(command_buf, "r", &repeat_count) ||
+                       command_matches(command_buf, "run", &repeat_count) ||
+                       command_matches(command_buf, "all", &repeat_count)) {
+                run_all_tests_repeat(repeat_count);
             } else {
-                printf("Unknown command '%c'. Press h for help.\n", (char)c);
+                int test_index = map_test_command(command_buf, &repeat_count, &steady_mph);
+                if (test_index == TEST_INDEX_DYNAMIC_STEADY) {
+                    run_dynamic_steady(steady_mph, repeat_count);
+                } else if (test_index >= 0) {
+                    run_test_by_index(test_index, repeat_count);
+                } else {
+                    printf("Unknown command '%s'. Press h for help.\n", command_buf);
+                }
             }
         }
 
