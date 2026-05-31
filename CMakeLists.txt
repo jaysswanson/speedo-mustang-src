@@ -43,41 +43,17 @@ if(SPEEDO_UNIT_TEST)
     add_library(speedo_logic STATIC speedo_logic.cpp)
     target_include_directories(speedo_logic PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
-    find_path(GTEST_INCLUDE_DIR gtest/gtest.h
-        PATHS
-            /usr/local/include
-            /opt/homebrew/include
-            $ENV{GTEST_ROOT}/include
-            ${GTEST_ROOT}/include
-        NO_DEFAULT_PATH
-        NO_CMAKE_FIND_ROOT_PATH
+    # Use FetchContent to acquire GoogleTest when not available on the host.
+    include(FetchContent)
+    FetchContent_Declare(
+        googletest
+        URL https://github.com/google/googletest/archive/refs/heads/main.zip
     )
-    find_library(GTEST_LIBRARY NAMES gtest
-        PATHS
-            /usr/local/lib
-            /opt/homebrew/lib
-            $ENV{GTEST_ROOT}/lib
-            ${GTEST_ROOT}/lib
-        NO_DEFAULT_PATH
-        NO_CMAKE_FIND_ROOT_PATH
-    )
-    find_library(GTEST_MAIN_LIBRARY NAMES gtest_main
-        PATHS
-            /usr/local/lib
-            /opt/homebrew/lib
-            $ENV{GTEST_ROOT}/lib
-            ${GTEST_ROOT}/lib
-        NO_DEFAULT_PATH
-        NO_CMAKE_FIND_ROOT_PATH
-    )
-
-    if(NOT GTEST_INCLUDE_DIR OR NOT GTEST_LIBRARY OR NOT GTEST_MAIN_LIBRARY)
-        message(FATAL_ERROR "Could not find GoogleTest. Install googletest via Homebrew or set GTEST_ROOT.")
-    endif()
+    # This will download and add targets GTest::gtest and GTest::gtest_main
+    FetchContent_MakeAvailable(googletest)
 
     add_executable(speedo_tests test/test_speedo_logic.cpp)
-    target_include_directories(speedo_tests PRIVATE ${GTEST_INCLUDE_DIR})
-    target_link_libraries(speedo_tests speedo_logic ${GTEST_LIBRARY} ${GTEST_MAIN_LIBRARY} m)
+    target_link_libraries(speedo_tests PRIVATE speedo_logic GTest::gtest_main m)
     enable_testing()
     add_test(NAME speedo_unit_tests COMMAND speedo_tests)
     return()   # Skip everything below (Pico SDK not initialised in this mode)

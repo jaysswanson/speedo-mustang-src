@@ -1,5 +1,7 @@
 build
 build-test
 build-hil
+.vscode/
+build-unit/
 .DS_Store
 !.vscode/*

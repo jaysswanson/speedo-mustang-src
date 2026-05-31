@@ -3,8 +3,54 @@
 //
 // These tests run entirely on the host — no Pico SDK or hardware needed.
 
+#include <algorithm>
+#include <cmath>
+#include <vector>
 #include <gtest/gtest.h>
 #include "../speedo_logic.h"
+
+static const double INPUT_PERIOD_1MPH_US = 450113.0;
+
+static uint64_t mph_to_input_width_us(double mph) {
+    return (uint64_t)(INPUT_PERIOD_1MPH_US / mph + 0.5);
+}
+
+static double output_interval_to_mph(uint64_t output_interval_us) {
+    if (output_interval_us == 0) {
+        return 0.0;
+    }
+    return INPUT_PERIOD_1MPH_US / (output_interval_us * 8.0);
+}
+
+static double compute_mean(const std::vector<double> &values) {
+    double sum = 0.0;
+    for (double v : values) sum += v;
+    return sum / values.size();
+}
+
+static double compute_stddev(const std::vector<double> &values, double mean) {
+    double variance = 0.0;
+    for (double v : values) {
+        double diff = v - mean;
+        variance += diff * diff;
+    }
+    return std::sqrt(variance / values.size());
+}
+
+static uint64_t expected_effective_count(const SpeedoState &s) {
+    uint32_t available = s.window_filled ? WINDOW_SIZE : (uint32_t)s.pulse_pos;
+    uint64_t basis_interval = s.input_interval_us ? s.input_interval_us : s.last_input_interval_us;
+    if (basis_interval == 0) {
+        return available;
+    }
+    uint32_t effective = (uint32_t)((MEASUREMENT_WINDOW_US + basis_interval / 2) / basis_interval);
+    if (effective < MIN_EFFECTIVE_WINDOW) {
+        effective = MIN_EFFECTIVE_WINDOW;
+    } else if (effective > WINDOW_SIZE) {
+        effective = WINDOW_SIZE;
+    }
+    return std::min<uint32_t>(available, effective);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -184,7 +230,10 @@ TEST(ComputeMetrics, VaryingPulsesGiveNonZeroJitter) {
     s.pulse_out_window[0] = 9000  / 8;
     s.pulse_out_window[1] = 10000 / 8;
     s.pulse_out_window[2] = 11000 / 8;
-    s.window_filled   = true;
+    // Only three samples are populated; mark pulse_pos accordingly and
+    // leave window_filled=false so the computation uses the first N entries.
+    s.pulse_pos = 3U;
+    s.window_filled   = false;
     s.last_edge_valid = true;
     s.last_edge_us    = 500;
 
@@ -257,6 +306,97 @@ TEST(UpdateOutput, ZeroIntervalDisablesOutput) {
     EXPECT_EQ(fake.cancel_count,  1);
     EXPECT_EQ(fake.start_count,   0);
     EXPECT_EQ(fake.set_pin_count, 1);
+}
+
+TEST(ProcessPulse, AccelerationProfileTracksExpectedSpeed) {
+    auto s = make_state();
+    const double start_mph = 20.0;
+    const double end_mph = 55.0;
+    const uint64_t total_ramp_us = 5000000ULL;
+    const uint64_t sample_interval_us = 300000ULL;
+    const uint64_t max_pulse_us = MAX_PULSE_US;
+
+    std::vector<double> expected_speeds;
+    std::vector<double> actual_speeds;
+    std::vector<double> sample_times_us;
+
+    uint64_t now_us = 0;
+    uint64_t next_sample_us = sample_interval_us;
+    uint64_t last_pulse_us = 0;
+
+    while (now_us < total_ramp_us || expected_speeds.empty()) {
+        double progress = (now_us >= total_ramp_us)
+            ? 1.0
+            : (double)now_us / (double)total_ramp_us;
+        double target_mph = start_mph + (end_mph - start_mph) * progress;
+        uint64_t pulse_width_us = mph_to_input_width_us(target_mph);
+        if (pulse_width_us > max_pulse_us) {
+            pulse_width_us = max_pulse_us;
+        }
+
+        bool ok = speedo_process_pulse(s, pulse_width_us);
+        EXPECT_TRUE(ok);
+        s.last_edge_valid = true;
+        now_us += pulse_width_us;
+        s.last_edge_us = now_us;
+        last_pulse_us = pulse_width_us;
+
+        while (now_us >= next_sample_us) {
+            double expected_speed = start_mph +
+                (end_mph - start_mph) *
+                (double)next_sample_us / (double)total_ramp_us;
+            if (expected_speed > end_mph) {
+                expected_speed = end_mph;
+            }
+
+            double std_dev;
+            uint64_t count;
+            uint64_t expected_count = expected_effective_count(s);
+            bool have_metrics = speedo_compute_metrics(s, now_us, std_dev, count);
+            EXPECT_EQ(count, expected_count);
+
+            double actual_speed = 0.0;
+            if (have_metrics) {
+                actual_speed = output_interval_to_mph(s.output_interval_us);
+            }
+            expected_speeds.push_back(expected_speed);
+            actual_speeds.push_back(actual_speed);
+            sample_times_us.push_back(next_sample_us);
+            next_sample_us += sample_interval_us;
+        }
+    }
+
+    ASSERT_FALSE(expected_speeds.empty());
+    EXPECT_EQ(expected_speeds.size(), actual_speeds.size());
+
+    std::vector<double> abs_diffs;
+    abs_diffs.reserve(expected_speeds.size());
+    for (size_t i = 0; i < expected_speeds.size(); ++i) {
+        double diff = std::fabs(expected_speeds[i] - actual_speeds[i]);
+        abs_diffs.push_back(diff);
+        std::cout << "Sample " << (i + 1)
+                  << ": time=" << sample_times_us[i] / 1000 << " ms"
+                  << " expected=" << expected_speeds[i]
+                  << " actual=" << actual_speeds[i]
+                  << " diff=" << diff << "\n";
+    }
+
+    double min_diff = abs_diffs[0];
+    double max_diff = abs_diffs[0];
+    for (double diff : abs_diffs) {
+        min_diff = std::min(min_diff, diff);
+        max_diff = std::max(max_diff, diff);
+    }
+    double mean_diff = compute_mean(abs_diffs);
+    double stddev_diff = compute_stddev(abs_diffs, mean_diff);
+
+    std::cout << "Acceleration profile diff stats: min=" << min_diff
+              << " max=" << max_diff
+              << " avg=" << mean_diff
+              << " stddev=" << stddev_diff << "\n";
+
+    EXPECT_LT(max_diff, 15.0);
+    EXPECT_LT(mean_diff, 5.0);
 }
 
 // ---------------------------------------------------------------------------

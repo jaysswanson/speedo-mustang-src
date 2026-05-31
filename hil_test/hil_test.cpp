@@ -224,6 +224,7 @@ static void print_help(void) {
     printf("  5-# or resume-#           - TC-3 Resume\n");
     printf("  6-# or glitch-#           - TC-4 Glitch\n");
     printf("  7-# or ramp-#             - TC-5 Ramp\n");
+    printf("  accel-#                  - TC-8 Acceleration 20-55 mph\n");
     printf("  8-# or min-#              - TC-6 Boundary MIN\n");
     printf("  9-# or max-#              - TC-7 Boundary MAX\n");
     printf("  steadyX-#                - custom steady at X mph # times\n");
@@ -331,6 +332,7 @@ static int map_test_command(const char *input, int *repeat_count, double *steady
         {"5", 5}, {"resume", 5},
         {"6", 6}, {"glitch", 6},
         {"7", 7}, {"ramp", 7},
+        {"accel", 10},
         {"8", 8}, {"min", 8}, {"boundarymin", 8},
         {"9", 9}, {"max", 9}, {"boundarymax", 9}
     };
@@ -349,6 +351,7 @@ static void tc_dropout(void);
 static void tc_resume(void);
 static void tc_glitch_rejection(void);
 static void tc_speed_ramp(void);
+static void tc_acceleration(void);
 static void tc_boundary_min(void);
 static void tc_boundary_max(void);
 
@@ -383,7 +386,7 @@ static void print_run_summary(void) {
 static void run_one_test_by_index(int index) {
     static void (*const tests[])(void) = {
         tc_1a, tc_1b, tc_1c, tc_1d,
-        tc_2, tc_3, tc_4, tc_5, tc_6, tc_7
+        tc_2, tc_3, tc_4, tc_5, tc_acceleration, tc_6, tc_7
     };
     static const char *const names[] = {
         "TC-1a Steady  5 mph",
@@ -394,6 +397,7 @@ static void run_one_test_by_index(int index) {
         "TC-3 Resume",
         "TC-4 Glitch",
         "TC-5 Ramp",
+        "TC-8 Acceleration 20-55 mph",
         "TC-6 Boundary MIN",
         "TC-7 Boundary MAX"
     };
@@ -450,6 +454,7 @@ static void run_all_tests(void) {
     tc_3();
     tc_4();
     tc_5();
+    tc_acceleration();
     tc_6();
     tc_7();
     print_run_summary();
@@ -678,6 +683,97 @@ static void tc_speed_ramp(void) {
 
     gen_stop();
     report("TC-5 Ramp", all_passed, summary);
+}
+
+// TC-8  Acceleration: ramp from 20 mph to 55 mph in 5 seconds while sampling every 300 ms
+static void tc_acceleration(void) {
+    const double start_mph = 20.0;
+    const double end_mph   = 55.0;
+    const uint32_t total_ms = 5000U;
+    const uint32_t sample_ms = 300U;
+    const int sample_count = (int)(total_ms / sample_ms) + 1;
+    const int measurement_edges = 5;
+
+    double diffs[32];
+    double expected_speeds[32];
+    double actual_speeds[32];
+    bool all_samples_ok = true;
+    int sample_index = 0;
+
+    for (int i = 0; i < sample_count; ++i) {
+        uint32_t time_ms = i * sample_ms;
+        if (time_ms > total_ms) {
+            time_ms = total_ms;
+        }
+        double expected_mph = start_mph +
+            (end_mph - start_mph) * (double)time_ms / (double)total_ms;
+        if (expected_mph > end_mph) {
+            expected_mph = end_mph;
+        }
+
+        uint64_t gen_half_us = mph_to_gen_half_period(expected_mph);
+        gen_start(gen_half_us);
+
+        // Let the DUT see the new speed and settle briefly before measurement.
+        sleep_ms(120);
+
+        uint64_t measured_out_us = checker_measure_avg_period(measurement_edges, 300);
+        if (measured_out_us == 0) {
+            all_samples_ok = false;
+            expected_speeds[sample_index] = expected_mph;
+            actual_speeds[sample_index] = 0.0;
+            diffs[sample_index] = end_mph;  // indicate failure
+            sample_index++;
+            printf("Sample %d: expected %.1f mph → TIMEOUT\n", i + 1, expected_mph);
+        } else {
+            double actual_mph = OUTPUT_PERIOD_1MPH_US / (double)measured_out_us;
+            double diff = fabs(actual_mph - expected_mph);
+            expected_speeds[sample_index] = expected_mph;
+            actual_speeds[sample_index] = actual_mph;
+            diffs[sample_index] = diff;
+            printf("Sample %d: expected %.1f mph, actual %.1f mph, diff %.2f mph\n",
+                   i + 1, expected_mph, actual_mph, diff);
+            if (measured_out_us == 0) {
+                all_samples_ok = false;
+            }
+            sample_index++;
+        }
+
+        if (i < sample_count - 1) {
+            sleep_ms(sample_ms);
+        }
+    }
+
+    gen_stop();
+
+    if (sample_index == 0) {
+        report("TC-8 Acceleration 20-55 mph", false,
+               "No acceleration samples were collected");
+        return;
+    }
+
+    double sum = 0.0;
+    double sum_sq = 0.0;
+    double min_diff = diffs[0];
+    double max_diff = diffs[0];
+    for (int i = 0; i < sample_index; ++i) {
+        double diff = diffs[i];
+        sum += diff;
+        sum_sq += diff * diff;
+        min_diff = (diff < min_diff) ? diff : min_diff;
+        max_diff = (diff > max_diff) ? diff : max_diff;
+    }
+    double avg_diff = sum / sample_index;
+    double variance = sum_sq / sample_index - avg_diff * avg_diff;
+    double stddev = variance > 0.0 ? sqrt(variance) : 0.0;
+
+    char summary[256];
+    snprintf(summary, sizeof(summary),
+             "diff min=%.2f max=%.2f avg=%.2f stddev=%.2f mph",
+             min_diff, max_diff, avg_diff, stddev);
+
+    bool passed = all_samples_ok && (max_diff <= 12.0);
+    report("TC-8 Acceleration 20-55 mph", passed, summary);
 }
 
 // TC-6  Boundary: input just at MIN_PULSE_US — should be accepted
