@@ -188,6 +188,97 @@ static void report(const char *name, bool passed, const char *detail) {
     printf("[%s] %s  %s\n", passed ? "PASS" : "FAIL", name, detail);
 }
 
+static void reset_test_state(void) {
+    g_tests_run = 0;
+    g_tests_passed = 0;
+    gen_stop();
+    checker_flush();
+    sleep_ms(1500);
+}
+
+static void print_help(void) {
+    printf("\nUSB serial commands:\n");
+    printf("  r - restart all tests\n");
+    printf("  0 - TC-1a Steady  5 mph\n");
+    printf("  1 - TC-1b Steady 30 mph\n");
+    printf("  2 - TC-1c Steady 55 mph\n");
+    printf("  3 - TC-1d Steady 88 mph\n");
+    printf("  4 - TC-2 Dropout\n");
+    printf("  5 - TC-3 Resume\n");
+    printf("  6 - TC-4 Glitch\n");
+    printf("  7 - TC-5 Ramp\n");
+    printf("  8 - TC-6 Boundary MIN\n");
+    printf("  9 - TC-7 Boundary MAX\n");
+    printf("  h - help\n\n");
+}
+
+static void tc_steady_speed(const char *label, double mph);
+static void tc_dropout(void);
+static void tc_resume(void);
+static void tc_glitch_rejection(void);
+static void tc_speed_ramp(void);
+static void tc_boundary_min(void);
+static void tc_boundary_max(void);
+
+static void tc_1a(void) { tc_steady_speed("TC-1a Steady  5 mph", 5.0); }
+static void tc_1b(void) { tc_steady_speed("TC-1b Steady 30 mph", 30.0); }
+static void tc_1c(void) { tc_steady_speed("TC-1c Steady 55 mph", 55.0); }
+static void tc_1d(void) { tc_steady_speed("TC-1d Steady 88 mph", 88.0); }
+static void tc_2(void)  { tc_dropout(); }
+static void tc_3(void)  { tc_resume(); }
+static void tc_4(void)  { tc_glitch_rejection(); }
+static void tc_5(void)  { tc_speed_ramp(); }
+static void tc_6(void)  { tc_boundary_min(); }
+static void tc_7(void)  { tc_boundary_max(); }
+
+static void run_test_by_index(int index) {
+    static void (*const tests[])(void) = {
+        tc_1a, tc_1b, tc_1c, tc_1d,
+        tc_2, tc_3, tc_4, tc_5, tc_6, tc_7
+    };
+    static const char *const names[] = {
+        "TC-1a Steady  5 mph",
+        "TC-1b Steady 30 mph",
+        "TC-1c Steady 55 mph",
+        "TC-1d Steady 88 mph",
+        "TC-2 Dropout",
+        "TC-3 Resume",
+        "TC-4 Glitch",
+        "TC-5 Ramp",
+        "TC-6 Boundary MIN",
+        "TC-7 Boundary MAX"
+    };
+    if (index < 0 || index >= (int)(sizeof(tests) / sizeof(tests[0]))) {
+        printf("Invalid test index %d\n", index);
+        return;
+    }
+    printf("\nRunning %s...\n", names[index]);
+    tests[index]();
+    printf("\nResults: %d / %d passed\n", g_tests_passed, g_tests_run);
+}
+
+static void run_all_tests(void) {
+    printf("\nRunning full HIL test suite...\n");
+    tc_1a();
+    tc_1b();
+    tc_1c();
+    tc_1d();
+    tc_2();
+    tc_3();
+    tc_4();
+    tc_5();
+    tc_6();
+    tc_7();
+    printf("\n============================================================\n");
+    printf("  Results: %d / %d passed\n", g_tests_passed, g_tests_run);
+    if (g_tests_passed == g_tests_run) {
+        printf("  ALL TESTS PASSED\n");
+    } else {
+        printf("  *** %d TEST(S) FAILED ***\n", g_tests_run - g_tests_passed);
+    }
+    printf("============================================================\n");
+}
+
 // ---------------------------------------------------------------------------
 // Individual test cases
 // ---------------------------------------------------------------------------
@@ -362,7 +453,7 @@ static void tc_glitch_rejection(void) {
 
 // TC-5  Speed ramp — step through several speeds and verify output tracks
 static void tc_speed_ramp(void) {
-    static const double speeds_mph[] = { 5.0, 20.0, 55.0, 88.0, 55.0, 20.0 };
+    static const double speeds_mph[] = { 1.0, 20.0, 55.0, 88.0, 55.0, 20.0, 1.0 };
     static const int    N = (int)(sizeof(speeds_mph) / sizeof(speeds_mph[0]));
 
     bool all_passed = true;
@@ -489,51 +580,43 @@ int main() {
                                        true, &check_gpio_callback);
 
     // Ensure DUT starts from a clean idle state
-    gen_stop();
-    sleep_ms(1500);
+    reset_test_state();
 
-    // ------------------------------------------------------------------
-    // Run test suite
-    // ------------------------------------------------------------------
-    tc_steady_speed("TC-1a Steady  5 mph",   5.0);
-    tc_steady_speed("TC-1b Steady 30 mph",  30.0);
-    tc_steady_speed("TC-1c Steady 55 mph",  55.0);
-    tc_steady_speed("TC-1d Steady 88 mph",  88.0);
-    tc_dropout();
-    tc_resume();
-    tc_glitch_rejection();
-    tc_speed_ramp();
-    tc_boundary_min();
-    tc_boundary_max();
+    // Run initial test suite once at boot
+    run_all_tests();
+    print_help();
 
-    // ------------------------------------------------------------------
-    // Summary
-    // ------------------------------------------------------------------
-    printf("\n============================================================\n");
-    printf("  Results: %d / %d passed\n", g_tests_passed, g_tests_run);
-    if (g_tests_passed == g_tests_run) {
-        printf("  ALL TESTS PASSED\n");
-    } else {
-        printf("  *** %d TEST(S) FAILED ***\n", g_tests_run - g_tests_passed);
-    }
-    printf("============================================================\n");
-
-    // Hold LED on/off to signal result without a serial terminal
+    // Keep the on-board LED blinking while listening for USB serial commands.
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+    bool led_state = false;
+    absolute_time_t next_led_toggle = get_absolute_time();
+
     while (true) {
-        if (g_tests_passed == g_tests_run) {
-            // Slow blink = all pass
-            gpio_put(PICO_DEFAULT_LED_PIN, true);
-            sleep_ms(900);
-            gpio_put(PICO_DEFAULT_LED_PIN, false);
-            sleep_ms(900);
-        } else {
-            // Rapid blink = failure
-            gpio_put(PICO_DEFAULT_LED_PIN, true);
-            sleep_ms(150);
-            gpio_put(PICO_DEFAULT_LED_PIN, false);
-            sleep_ms(150);
+        int c = getchar_timeout_us(100000);
+        if (c != PICO_ERROR_TIMEOUT) {
+            if (c == '\r' || c == '\n') {
+                continue;
+            }
+            printf("%c\n", (char)c);
+            if (c == 'h' || c == 'H') {
+                print_help();
+            } else if (c == 'r' || c == 'R') {
+                reset_test_state();
+                run_all_tests();
+            } else if (c >= '0' && c <= '9') {
+                reset_test_state();
+                run_test_by_index(c - '0');
+            } else {
+                printf("Unknown command '%c'. Press h for help.\n", (char)c);
+            }
+        }
+
+        uint32_t blink_ms = (g_tests_passed == g_tests_run) ? 900U : 150U;
+        if (absolute_time_diff_us(get_absolute_time(), next_led_toggle) <= 0) {
+            led_state = !led_state;
+            gpio_put(PICO_DEFAULT_LED_PIN, led_state);
+            next_led_toggle = make_timeout_time_ms(blink_ms);
         }
     }
 }

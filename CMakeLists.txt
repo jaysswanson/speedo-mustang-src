@@ -19,16 +19,6 @@ set(sdkVersion 2.2.0)
 set(toolchainVersion 14_2_Rel1)
 set(picotoolVersion 2.2.0-a4)
 set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
-if (EXISTS ${picoVscode})
-    include(${picoVscode})
-endif()
-# ====================================================================================
-set(PICO_BOARD pico CACHE STRING "Board type")
-
-# Pull in Raspberry Pi Pico SDK (must be before project)
-include(pico_sdk_import.cmake)
-
-project(speedo_mustang C CXX ASM)
 
 # ---------------------------------------------------------------------------
 # Host-side unit tests (no Pico SDK required)
@@ -36,14 +26,58 @@ project(speedo_mustang C CXX ASM)
 # ---------------------------------------------------------------------------
 option(SPEEDO_UNIT_TEST "Build host-side unit tests instead of firmware" OFF)
 
+if(NOT SPEEDO_UNIT_TEST)
+    if (EXISTS ${picoVscode})
+        include(${picoVscode})
+    endif()
+    set(PICO_BOARD pico CACHE STRING "Board type")
+
+    # Pull in Raspberry Pi Pico SDK (must be before project)
+    include(pico_sdk_import.cmake)
+endif()
+
+project(speedo_mustang C CXX ASM)
+
 if(SPEEDO_UNIT_TEST)
     # Plain host executable — no Pico SDK, no cross-compiler needed
     add_library(speedo_logic STATIC speedo_logic.cpp)
     target_include_directories(speedo_logic PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
-    find_package(GTest REQUIRED)
+    find_path(GTEST_INCLUDE_DIR gtest/gtest.h
+        PATHS
+            /usr/local/include
+            /opt/homebrew/include
+            $ENV{GTEST_ROOT}/include
+            ${GTEST_ROOT}/include
+        NO_DEFAULT_PATH
+        NO_CMAKE_FIND_ROOT_PATH
+    )
+    find_library(GTEST_LIBRARY NAMES gtest
+        PATHS
+            /usr/local/lib
+            /opt/homebrew/lib
+            $ENV{GTEST_ROOT}/lib
+            ${GTEST_ROOT}/lib
+        NO_DEFAULT_PATH
+        NO_CMAKE_FIND_ROOT_PATH
+    )
+    find_library(GTEST_MAIN_LIBRARY NAMES gtest_main
+        PATHS
+            /usr/local/lib
+            /opt/homebrew/lib
+            $ENV{GTEST_ROOT}/lib
+            ${GTEST_ROOT}/lib
+        NO_DEFAULT_PATH
+        NO_CMAKE_FIND_ROOT_PATH
+    )
+
+    if(NOT GTEST_INCLUDE_DIR OR NOT GTEST_LIBRARY OR NOT GTEST_MAIN_LIBRARY)
+        message(FATAL_ERROR "Could not find GoogleTest. Install googletest via Homebrew or set GTEST_ROOT.")
+    endif()
+
     add_executable(speedo_tests test/test_speedo_logic.cpp)
-    target_link_libraries(speedo_tests speedo_logic GTest::gtest GTest::gtest_main m)
+    target_include_directories(speedo_tests PRIVATE ${GTEST_INCLUDE_DIR})
+    target_link_libraries(speedo_tests speedo_logic ${GTEST_LIBRARY} ${GTEST_MAIN_LIBRARY} m)
     enable_testing()
     add_test(NAME speedo_unit_tests COMMAND speedo_tests)
     return()   # Skip everything below (Pico SDK not initialised in this mode)

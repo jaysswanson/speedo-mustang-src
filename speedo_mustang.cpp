@@ -80,14 +80,24 @@ static void gpio_callback(uint gpio, uint32_t events) {
         bool accepted = speedo_process_pulse(
             const_cast<SpeedoState &>(g_state), width_us);
 
-        if (!accepted && width_us > MAX_PULSE_US) {
-            // speedo_process_pulse already reset state; cancel the timer too
-            hal_cancel_timer();
+        if (!accepted) {
+            if (width_us > MAX_PULSE_US) {
+                // A long timeout indicates signal loss; reset state and restart
+                // the reference from the current edge.
+                hal_cancel_timer();
+                g_state.last_edge_us    = now_us;
+                g_state.last_edge_valid = true;
+            }
+            restore_interrupts(irq_status);
+            return;
         }
-    }
 
-    g_state.last_edge_us    = now_us;
-    g_state.last_edge_valid = true;
+        g_state.last_edge_us    = now_us;
+        g_state.last_edge_valid = true;
+    } else {
+        g_state.last_edge_us    = now_us;
+        g_state.last_edge_valid = true;
+    }
 
     restore_interrupts(irq_status);
 }
@@ -140,9 +150,10 @@ int main() {
             g_state.input_interval_us  = snap.input_interval_us;
             g_state.output_interval_us = snap.output_interval_us;
             if (!have_data) {
-                // timeout reset — propagate full reset back
+                // timeout reset — propagate full reset back and park the output.
                 const_cast<SpeedoState &>(g_state) = snap;
                 hal_cancel_timer();
+                hal_set_output_pin(true);
             }
             restore_interrupts(irq_status);
 

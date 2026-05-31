@@ -455,10 +455,14 @@ VS Code shortcut: **Run Task → Flash**
 
 ### 10.4 Fast load via USB (picotool)
 
-Hold BOOTSEL while connecting USB, then:
+Hold BOOTSEL while connecting USB, then use the OS-appropriate picotool path:
 
 ```powershell
-~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool.exe load build/speedo_mustang.uf2 -fx
+# macOS / Linux
+~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool load build/speedo_mustang.uf2 -fx
+
+# Windows
+%USERPROFILE%\.pico-sdk\picotool\2.2.0-a4\picotool\picotool.exe load build/speedo_mustang.uf2 -fx
 ```
 
 VS Code shortcut: **Run Task → Run Project**
@@ -487,14 +491,21 @@ automatically via **Run → Start Debugging**.
 ### 11.1 Host unit tests
 
 The pure logic in `speedo_logic.cpp` is tested without hardware using
-GoogleTest.  See [`test/README.md`](test/README.md) for full build
-instructions.
+GoogleTest.  The host test workflow uses a separate build directory
+(`build-test`) and does not invoke the Pico SDK cross-toolchain.
 
 ```powershell
+# Create and configure the native host test build
 cmake -B build-test -DSPEEDO_UNIT_TEST=ON -DCMAKE_BUILD_TYPE=Debug
+
+# Build the host tests
 cmake --build build-test
+
+# Run the host test suite
 ctest --test-dir build-test --output-on-failure
 ```
+
+See [`test/README.md`](test/README.md) for additional test details.
 
 **Test coverage:**
 
@@ -536,7 +547,11 @@ cmake -B build-hil -G Ninja -S hil_test
 cmake --build build-hil
 
 # Flash to the HIL Pico (hold BOOTSEL, then connect USB)
-~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool.exe load build-hil/hil_test.uf2 -fx
+# macOS / Linux
+~/.pico-sdk/picotool/2.2.0-a4/picotool/picotool load build-hil/hil_test.uf2 -fx
+
+# Windows
+%USERPROFILE%\.pico-sdk\picotool\2.2.0-a4\picotool\picotool.exe load build-hil/hil_test.uf2 -fx
 ```
 
 #### Test cases

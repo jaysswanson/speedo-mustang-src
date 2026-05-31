@@ -278,7 +278,7 @@ TEST(Scaling, FiftyFiveMphRoundTrip) {
     double std_dev; uint64_t count;
     speedo_compute_metrics(s, 2000, std_dev, count);
 
-    float out_freq = 1e6f / s.output_interval_us;
-    // expect ~489 Hz output (8.89 Hz/mph × 55 mph)
+    float out_freq = 1e6f / (2.0f * s.output_interval_us);
+    // expect ~489 Hz full-wave output frequency (8.89 Hz/mph × 55 mph)
     EXPECT_NEAR(out_freq, 489.0f, 10.0f);
 }

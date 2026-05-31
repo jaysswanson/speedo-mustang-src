@@ -109,6 +109,10 @@ void speedo_update_output(SpeedoState &s, SpeedoHal &hal) {
         change_rate = (float)((int64_t)s.output_interval_us -
                               (int64_t)s.last_output_interval_us)
                       / (float)s.output_interval_us * 100.0f;
+    } else if (s.last_output_interval_us == 0) {
+        return;   // Still stopped — no change
+    } else {
+        change_rate = 100.0f; // Transition from running to stopped
     }
 
     if (change_rate > -1.0f && change_rate < 1.0f) {
