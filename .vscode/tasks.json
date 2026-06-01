@@ -2,6 +2,23 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "Run Host Tests",
+            "type": "process",
+            "command": "/Users/jayswanson/.pico-sdk/cmake/v3.31.5/bin/ctest",
+            "args": [
+                "--test-dir",
+                "${workspaceFolder}/build-unit",
+                "--output-on-failure"
+            ],
+            "group": "test",
+            "problemMatcher": []
+        }
+    ]
+}
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
             "label": "Configure Project",
             "type": "process",
             "command": "cmake",
