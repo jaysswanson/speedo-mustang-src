@@ -55,7 +55,7 @@
             "label": "Compile Host Tests",
             "type": "process",
             "command": "${userHome}/.pico-sdk/ninja/v1.12.1/ninja",
-            "args": ["-C", "${workspaceFolder}/build-test"],
+            "args": ["-C", "${workspaceFolder}/build-unit"],
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -70,7 +70,7 @@
             "label": "Run Host Tests",
             "type": "process",
             "command": "ctest",
-            "args": ["--test-dir", "${workspaceFolder}/build-test", "--output-on-failure"],
+            "args": ["--test-dir", "${workspaceFolder}/build-unit", "--output-on-failure"],
             "group": "test",
             "presentation": {
                 "reveal": "always",
