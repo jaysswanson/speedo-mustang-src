@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define WINDOW_SIZE         8U  // physical buffer capacity (max samples stored)
+#define WINDOW_SIZE         40U  // physical buffer capacity (max samples stored)
 #define MEASUREMENT_WINDOW_US 300000U
 
 // Effective window size used for averaging will vary with speed to improve
