@@ -177,16 +177,22 @@ void speedo_update_output(SpeedoState &s, SpeedoHal &hal) {
         hal.log(buf);
     }
 
-    hal.cancel_timer();
-
     if (s.output_interval_us > 0 && s.output_interval_us < MAX_OUTPUT_PULSE_US) {
         if (hal.log) {
             snprintf(buf, sizeof(buf), "Setting output interval to %llu us\n",
                      (unsigned long long)s.output_interval_us);
             hal.log(buf);
         }
-        hal.start_timer(s.output_interval_us);
+        if (s.last_output_interval_us == 0) {
+            // Timer not running — start immediately rather than deferring.
+            hal.cancel_timer();
+            hal.start_timer(s.output_interval_us);
+        } else {
+            // Timer already running — let the current pulse finish first.
+            hal.set_pending_interval(s.output_interval_us);
+        }
     } else {
+        hal.cancel_timer();
         if (hal.log) {
             snprintf(buf, sizeof(buf),
                      "Output interval %llu us out of range, disabling output.\n",

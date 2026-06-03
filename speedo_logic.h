@@ -55,6 +55,11 @@ struct SpeedoHal {
     // Start (or restart) the repeating output timer at the given half-period
     void (*start_timer)(uint64_t interval_us);
 
+    // Request an interval change that takes effect after the current output
+    // pulse completes (pin returns high). Safe to call from the main loop
+    // while the timer ISR is running — avoids mid-pulse cancellation.
+    void (*set_pending_interval)(uint64_t interval_us);
+
     // Diagnostic logging — may be NULL to suppress all output
     void (*log)(const char *msg);
 };

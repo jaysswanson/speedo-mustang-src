@@ -27,6 +27,13 @@ static volatile SpeedoState g_state;
 static volatile bool        g_output_pin_state = true;
 static struct repeating_timer g_output_timer;
 
+// Pending interval set by the main loop when speed changes >1 %.
+// The timer callback applies it on the next rising edge (end of pulse) so the
+// current output pulse is never truncated mid-cycle.
+// uint32_t is sufficient (max interval is 93 750 µs); single-word reads/writes
+// are atomic on Cortex-M0+, so no lock is needed for this hand-off.
+static volatile uint32_t g_pending_interval_us = 0;
+
 // ---------------------------------------------------------------------------
 // Real HAL — called by speedo_update_output() in the main loop
 // ---------------------------------------------------------------------------
@@ -42,6 +49,18 @@ static void hal_cancel_timer(void) {
 static bool timer_callback(struct repeating_timer *t) {
     g_output_pin_state = !g_output_pin_state;
     gpio_put(PIN_OUTPUT, g_output_pin_state);
+
+    // Pin just went high = end of pulse. Apply any pending interval change now
+    // so we never cut a pulse short.
+    if (g_output_pin_state) {
+        uint32_t pending = g_pending_interval_us;
+        if (pending) {
+            g_pending_interval_us = 0;
+            cancel_repeating_timer(t);
+            add_repeating_timer_us(-(int64_t)pending, timer_callback, NULL,
+                                   &g_output_timer);
+        }
+    }
     return true;
 }
 
@@ -52,15 +71,20 @@ static void hal_start_timer(uint64_t interval_us) {
                            &g_output_timer);
 }
 
+static void hal_set_pending_interval(uint64_t interval_us) {
+    g_pending_interval_us = (uint32_t)interval_us;
+}
+
 static void hal_log(const char *msg) {
     printf("%s", msg);
 }
 
 static SpeedoHal g_hal = {
-    .set_output_pin = hal_set_output_pin,
-    .cancel_timer   = hal_cancel_timer,
-    .start_timer    = hal_start_timer,
-    .log            = hal_log,
+    .set_output_pin       = hal_set_output_pin,
+    .cancel_timer         = hal_cancel_timer,
+    .start_timer          = hal_start_timer,
+    .set_pending_interval = hal_set_pending_interval,
+    .log                  = hal_log,
 };
 
 // ---------------------------------------------------------------------------

@@ -63,20 +63,13 @@ static SpeedoState make_state() {
 
 // Fake HAL that records calls for assertion
 struct FakeHal {
-    int    cancel_count  = 0;
-    int    start_count   = 0;
-    int    set_pin_count = 0;
-    bool   last_pin_state = false;
-    uint64_t last_interval = 0;
-
-    SpeedoHal as_speedo_hal() {
-        return SpeedoHal{
-            .set_output_pin = [](bool s) { /* captured via pointer below */ },
-            .cancel_timer   = nullptr,
-            .start_timer    = nullptr,
-            .log            = nullptr,
-        };
-    }
+    int      cancel_count    = 0;
+    int      start_count     = 0;
+    int      set_pin_count   = 0;
+    int      pending_count   = 0;
+    bool     last_pin_state  = false;
+    uint64_t last_interval   = 0;
+    uint64_t pending_interval = 0;
 };
 
 // Because SpeedoHal uses plain C function pointers we thread state through
@@ -94,6 +87,10 @@ static SpeedoHal make_fake_hal(FakeHal &fake) {
         .start_timer  = [](uint64_t iv) {
             g_fake->start_count++;
             g_fake->last_interval = iv;
+        },
+        .set_pending_interval = [](uint64_t iv) {
+            g_fake->pending_count++;
+            g_fake->pending_interval = iv;
         },
         .log = nullptr,   // suppress output during tests
     };
@@ -261,20 +258,39 @@ TEST(UpdateOutput, SmallChangeDoesNotRestartTimer) {
     EXPECT_EQ(fake.start_count,  0);
 }
 
-TEST(UpdateOutput, LargeChangeRestartsTimer) {
+TEST(UpdateOutput, LargeChangeSetsPending) {
     auto s = make_state();
     FakeHal fake;
     SpeedoHal hal = make_fake_hal(fake);
 
     s.output_interval_us      = 10000;
-    s.last_output_interval_us = 5000;   // 50 % change
+    s.last_output_interval_us = 5000;   // 50 % change — timer already running
 
     speedo_update_output(s, hal);
 
-    EXPECT_EQ(fake.cancel_count, 1);
-    EXPECT_EQ(fake.start_count,  1);
-    EXPECT_EQ(fake.last_interval, 10000U);
+    // Timer must NOT be interrupted mid-pulse; pending is set instead.
+    EXPECT_EQ(fake.cancel_count,   0);
+    EXPECT_EQ(fake.start_count,    0);
+    EXPECT_EQ(fake.pending_count,  1);
+    EXPECT_EQ(fake.pending_interval, 10000U);
     EXPECT_EQ(s.last_output_interval_us, 10000U);
+}
+
+TEST(UpdateOutput, FirstStartBeginsImmediately) {
+    auto s = make_state();
+    FakeHal fake;
+    SpeedoHal hal = make_fake_hal(fake);
+
+    s.output_interval_us      = 10000;
+    s.last_output_interval_us = 0;   // timer was not running
+
+    speedo_update_output(s, hal);
+
+    // No existing pulse to protect — start immediately.
+    EXPECT_EQ(fake.cancel_count,  1);
+    EXPECT_EQ(fake.start_count,   1);
+    EXPECT_EQ(fake.last_interval, 10000U);
+    EXPECT_EQ(fake.pending_count, 0);
 }
 
 TEST(UpdateOutput, IntervalExceedsMaxDisablesOutput) {
