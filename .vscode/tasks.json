@@ -69,8 +69,12 @@
         {
             "label": "Run Host Tests",
             "type": "process",
-            "command": "ctest",
-            "args": ["--test-dir", "${workspaceFolder}/build-unit", "--output-on-failure"],
+            "command": "/Users/jayswanson/.pico-sdk/cmake/v3.31.5/bin/ctest",
+            "args": [
+                "--test-dir",
+                "${workspaceFolder}/build-unit",
+                "--output-on-failure"
+            ],
             "group": "test",
             "presentation": {
                 "reveal": "always",

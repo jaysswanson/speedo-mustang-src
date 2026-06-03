@@ -220,13 +220,14 @@ static void print_help(void) {
     printf("  0-# or 1a-# or steady5-#   - TC-1a Steady  5 mph\n");
     printf("  2-# or 1c-# or steady55-#  - TC-1c Steady 55 mph\n");
     printf("  3-# or 1d-# or steady88-#  - TC-1d Steady 88 mph\n");
-    printf("  4-# or dropout-#          - TC-2 Dropout\n");
-    printf("  5-# or resume-#           - TC-3 Resume\n");
-    printf("  6-# or glitch-#           - TC-4 Glitch\n");
-    printf("  7-# or ramp-#             - TC-5 Ramp\n");
+    printf("  4-# or 1e-# or steady1-#   - TC-1e Steady  1 mph\n");
+    printf("  5-# or dropout-#          - TC-2 Dropout\n");
+    printf("  6-# or resume-#           - TC-3 Resume\n");
+    printf("  7-# or glitch-#           - TC-4 Glitch\n");
+    printf("  8-# or ramp-#             - TC-5 Ramp\n");
     printf("  accel-#                  - TC-8 Acceleration 20-55 mph\n");
-    printf("  8-# or min-#              - TC-6 Boundary MIN\n");
-    printf("  9-# or max-#              - TC-7 Boundary MAX\n");
+    printf("  9-# or min-#              - TC-6 Boundary MIN\n");
+    printf("  10-# or max-#              - TC-7 Boundary MAX\n");
     printf("  steadyX-#                - custom steady at X mph # times\n");
     printf("  h or help                - show this menu\n\n");
 }
@@ -328,13 +329,14 @@ static int map_test_command(const char *input, int *repeat_count, double *steady
         {"1", 1}, {"1b", 1}, {"steady30", 1},
         {"2", 2}, {"1c", 2}, {"steady55", 2},
         {"3", 3}, {"1d", 3}, {"steady88", 3},
-        {"4", 4}, {"dropout", 4},
-        {"5", 5}, {"resume", 5},
-        {"6", 6}, {"glitch", 6},
-        {"7", 7}, {"ramp", 7},
-        {"accel", 10},
-        {"8", 8}, {"min", 8}, {"boundarymin", 8},
-        {"9", 9}, {"max", 9}, {"boundarymax", 9}
+        {"1e", 4}, {"steady1", 4},
+        {"4", 5}, {"dropout", 5},
+        {"5", 6}, {"resume", 6},
+        {"6", 7}, {"glitch", 7},
+        {"7", 8}, {"ramp", 8},
+        {"accel", 11},
+        {"8", 9}, {"min", 9}, {"boundarymin", 9},
+        {"9", 10}, {"max", 10}, {"boundarymax", 10}
     };
     for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
         int count;
@@ -359,6 +361,7 @@ static void tc_1a(void) { tc_steady_speed("TC-1a Steady  5 mph", 5.0); }
 static void tc_1b(void) { tc_steady_speed("TC-1b Steady 30 mph", 30.0); }
 static void tc_1c(void) { tc_steady_speed("TC-1c Steady 55 mph", 55.0); }
 static void tc_1d(void) { tc_steady_speed("TC-1d Steady 88 mph", 88.0); }
+static void tc_1e(void) { tc_steady_speed("TC-1e Steady  1 mph", 1.0); }
 static void tc_2(void)  { tc_dropout(); }
 static void tc_3(void)  { tc_resume(); }
 static void tc_4(void)  { tc_glitch_rejection(); }
@@ -393,6 +396,7 @@ static void run_one_test_by_index(int index) {
         "TC-1b Steady 30 mph",
         "TC-1c Steady 55 mph",
         "TC-1d Steady 88 mph",
+        "TC-1e Steady  1 mph",
         "TC-2 Dropout",
         "TC-3 Resume",
         "TC-4 Glitch",
@@ -450,6 +454,7 @@ static void run_all_tests(void) {
     tc_1b();
     tc_1c();
     tc_1d();
+    tc_1e();
     tc_2();
     tc_3();
     tc_4();
@@ -645,7 +650,7 @@ static void tc_glitch_rejection(void) {
 
 // TC-5  Speed ramp — step through several speeds and verify output tracks
 static void tc_speed_ramp(void) {
-    static const double speeds_mph[] = { 1.0, 20.0, 55.0, 88.0, 55.0, 20.0, 1.0 };
+    static const double speeds_mph[] = { 1.0, 5.0,20.0, 55.0, 88.0, 55.0, 20.0, 5.0, 1.0 };
     static const int    N = (int)(sizeof(speeds_mph) / sizeof(speeds_mph[0]));
 
     bool all_passed = true;
@@ -689,6 +694,7 @@ static void tc_speed_ramp(void) {
 static void tc_acceleration(void) {
     const double start_mph = 20.0;
     const double end_mph   = 55.0;
+    const uint32_t settle_ms = 1500U;  // Allow DUT to settle at 20 mph
     const uint32_t total_ms = 5000U;
     const uint32_t sample_ms = 300U;
     const int sample_count = (int)(total_ms / sample_ms) + 1;
@@ -700,6 +706,14 @@ static void tc_acceleration(void) {
     bool all_samples_ok = true;
     int sample_index = 0;
 
+    // Phase 1: Allow DUT to settle on 20 mph for 1.5 seconds before starting acceleration
+    printf("Settling on %.0f mph for %.0f ms...\n", start_mph, (double)settle_ms);
+    uint64_t settle_gen_half_us = mph_to_gen_half_period(start_mph);
+    gen_start(settle_gen_half_us);
+    sleep_ms(settle_ms);
+
+    // Phase 2: Acceleration ramp with sampling every 300 ms
+    printf("Starting acceleration ramp...\n");
     for (int i = 0; i < sample_count; ++i) {
         uint32_t time_ms = i * sample_ms;
         if (time_ms > total_ms) {
