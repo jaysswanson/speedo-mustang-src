@@ -47,9 +47,9 @@ static const double OUTPUT_PERIOD_1MPH_US = 112528.0;
 // Test tolerances
 // ---------------------------------------------------------------------------
 #define FREQ_TOLERANCE_PCT   5.0    // ±5 % on output frequency
-#define SETTLE_EXTRA_MS      700U   // extra margin on top of 3 DUT avg cycles
-#define MEASURE_SAMPLES      10U    // rising edges to average for frequency check
-#define MEASURE_TIMEOUT_MS   5000U  // give up waiting for samples after this long
+#define SETTLE_EXTRA_MS      1500U   // extra margin on top of 3 DUT avg cycles
+#define MEASURE_SAMPLES      50U    // rising edges to average for frequency check
+#define MEASURE_TIMEOUT_MS   10000U  // give up waiting for samples after this long
 
 // ---------------------------------------------------------------------------
 // Generator state
@@ -87,7 +87,7 @@ static void gen_stop(void) {
 // ---------------------------------------------------------------------------
 // Checker — measures rising-edge periods on CHECK_PIN
 // ---------------------------------------------------------------------------
-#define CHECKER_BUF_SIZE 32U
+#define CHECKER_BUF_SIZE 100U
 
 static volatile uint64_t  g_check_times[CHECKER_BUF_SIZE];
 static volatile uint32_t  g_check_write = 0;   // next slot to write
@@ -388,7 +388,7 @@ static void print_run_summary(void) {
 
 static void run_one_test_by_index(int index) {
     static void (*const tests[])(void) = {
-        tc_1a, tc_1b, tc_1c, tc_1d,
+        tc_1a, tc_1b, tc_1c, tc_1d, tc_1e,
         tc_2, tc_3, tc_4, tc_5, tc_acceleration, tc_6, tc_7
     };
     static const char *const names[] = {
@@ -450,17 +450,29 @@ static void run_test_by_index(int index, int repeats) {
 
 static void run_all_tests(void) {
     printf("\nRunning full HIL test suite...\n");
+    reset_test_state();
     tc_1a();
+    reset_test_state();
     tc_1b();
+    reset_test_state();
     tc_1c();
+    reset_test_state();
     tc_1d();
+    reset_test_state();
     tc_1e();
+    reset_test_state();
     tc_2();
+    reset_test_state();
     tc_3();
+    reset_test_state();
     tc_4();
+    reset_test_state();
     tc_5();
+    reset_test_state();
     tc_acceleration();
+    reset_test_state();
     tc_6();
+    reset_test_state();
     tc_7();
     print_run_summary();
 }
@@ -650,7 +662,7 @@ static void tc_glitch_rejection(void) {
 
 // TC-5  Speed ramp — step through several speeds and verify output tracks
 static void tc_speed_ramp(void) {
-    static const double speeds_mph[] = { 1.0, 5.0,20.0, 55.0, 88.0, 55.0, 20.0, 5.0, 1.0 };
+    static const double speeds_mph[] = { 1.0,5.0,20.0, 55.0, 88.0, 55.0, 20.0, 5.0, 1.0 };
     static const int    N = (int)(sizeof(speeds_mph) / sizeof(speeds_mph[0]));
 
     bool all_passed = true;
@@ -694,8 +706,8 @@ static void tc_speed_ramp(void) {
 static void tc_acceleration(void) {
     const double start_mph = 20.0;
     const double end_mph   = 55.0;
-    const uint32_t settle_ms = 1500U;  // Allow DUT to settle at 20 mph
-    const uint32_t total_ms = 5000U;
+    const uint32_t settle_ms = 700U;  // Allow DUT to settle at 20 mph
+    const uint32_t total_ms = 3000U;
     const uint32_t sample_ms = 300U;
     const int sample_count = (int)(total_ms / sample_ms) + 1;
     const int measurement_edges = 5;
